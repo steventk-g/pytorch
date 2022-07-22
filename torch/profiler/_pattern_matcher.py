@@ -1,4 +1,5 @@
 from collections import deque
+import os
 import re
 from typing import Dict, List, Set
 
@@ -340,18 +341,69 @@ class OptimizerSingleTensorPattern(Pattern):
     def __init__(self, prof: profile, should_benchmark: bool = False):
         super().__init__(prof, should_benchmark)
         self.name = "Optimizer Single Tensor Pattern"
-        self.optimizers_with_foreach = [
-            "adam", "sgd", "adamw"
-        ]
+        self.optimizers_with_foreach = ["adam", "sgd", "adamw"]
         self.description = (
             "Deteced optimizer running with single tensor implementation. "
-            "Please enable multi tensor implementation by passing 'foreach=True' into optimizer.")
+            "Please enable multi tensor implementation by passing 'foreach=True' into optimizer."
+        )
 
     def match(self, event: _ProfilerEvent):
         for optimizer in self.optimizers_with_foreach:
             if event.name().endswith(f"_single_tensor_{optimizer}"):
                 return True
         return False
+
+
+class SynchronizedDataLoaderPattern(Pattern):
+    '''
+    This pattern identifies if we are using num_workers=0 in DataLoader.
+    example:
+    torch.utils.data.DataLoader(dataset, batch_size=batch_size)
+    Add num_workers=N to the arguments. N depends on system configuration.
+
+    Pattern:
+    dataloader.py(...): __iter__
+        dataloader.py(...): _get_iterator
+            NOT dataloader.py(...): check_worker_number_rationality
+
+    Algorithm:
+    If we don't see check_worker_number_rationality call in the dataloader __iter__,
+    It is not an asynchronous dataloader.
+
+    '''
+
+    def __init__(self, prof: profile, should_benchmark: bool = False):
+        super().__init__(prof, should_benchmark)
+        self.name = "Synchronized DataLoader Pattern"
+        self.description = (
+            "Detected DataLoader running with synchronized implementation. "
+            "Please enable asynchronous dataloading by setting num_workers > 0 when initializing DataLoader."
+        )
+        # We precompile the regex to avoid recompiling it every time we match
+        # The four back slashes are to escape windows path separator
+        seperator = "\\\\" if os.sep == "\\" else os.sep
+        self.iter_regex = re.compile(
+            r"torch/utils/data/dataloader.py\([0-9]+\): __iter__$"
+            .replace("/", seperator))
+        self.get_iterator_regex = re.compile(
+            r"torch/utils/data/dataloader.py\([0-9]+\): _get_iterator$"
+            .replace("/", seperator))
+        self.check_worker_regex = re.compile(
+            r"torch/utils/data/dataloader.py\([0-9]+\): check_worker_number_rationality$"
+            .replace("/", seperator))
+
+    def match(self, event: _ProfilerEvent):
+        if not re.search(self.iter_regex, event.name()):
+            return False
+        if not event.children:
+            return False
+        event = event.children[0]
+        if not re.search(self.get_iterator_regex, event.name()):
+            return False
+        if not event.children:
+            return False
+        event = event.children[0]
+        return not bool(re.search(self.check_worker_regex, event.name()))
 
 
 def source_code_location(event: _ProfilerEvent):
@@ -377,7 +429,8 @@ def report_all_anti_patterns(prof, should_benchmark: bool = False):
         ExtraCUDACopyPattern(prof, should_benchmark),
         ForLoopIndexingPattern(prof, should_benchmark),
         FP32MatMulPattern(prof, should_benchmark),
-        OptimizerSingleTensorPattern(prof, should_benchmark)
+        OptimizerSingleTensorPattern(prof, should_benchmark),
+        SynchronizedDataLoaderPattern(prof, should_benchmark)
     ]
     reported = set()
     summaries = []
