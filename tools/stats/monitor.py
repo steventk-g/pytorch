@@ -71,7 +71,7 @@ if __name__ == "__main__":
 
     kill_now = False
 
-    def exit_gracefully(*args):
+    def exit_gracefully(*args: Any) -> None:
         global kill_now
         kill_now = True
 
@@ -87,7 +87,9 @@ if __name__ == "__main__":
             }
             if handle is not None:
                 stats["per_process_gpu_info"] = get_per_process_gpu_info(handle)
-                stats["total_gpu_utilizaiton"] = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
+                stats["total_gpu_utilizaiton"] = pynvml.nvmlDeviceGetUtilizationRates(
+                    handle
+                ).gpu
         except Exception as e:
             stats = {
                 "time": datetime.datetime.utcnow().isoformat("T") + "Z",

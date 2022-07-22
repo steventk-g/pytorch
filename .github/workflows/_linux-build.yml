@@ -60,6 +60,18 @@ jobs:
       - name: Setup Linux
         uses: ./.github/actions/setup-linux
 
+      - name: Start monitoring script
+        id: monitor-script
+        shell: bash
+        run: |
+          python3 -m pip install psutil==5.9.1
+          python3 -m pip install pynvml==11.4.1
+          python3 -m tools.stats.monitor > usage_log.txt 2>&1 &mo
+          asdf=$!
+          sleep 60
+          kill $asdf
+          cat usage_log.txt
+
       - name: Setup SSH (Click me for login details)
         uses: ./.github/actions/setup-ssh
         with:
