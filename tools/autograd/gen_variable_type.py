@@ -61,6 +61,7 @@ from torchgen.api.types import (
     tensorT,
     tensorListT,
     iTensorListRefT,
+    iOptTensorListRefT,
     MutRefCType,
     OptionalCType,
     ListCType,
@@ -417,6 +418,17 @@ for (size_t i=0; i<${tensorlist_name}.size() && !at::impl::dispatch_mode_enabled
 """
 )
 
+# See [Note: IOptTensorListRef]
+# Materialize the tensor list once before using.
+MATERIALIZE_OPTIONALTENSORLIST = CodeTemplate(
+    """\
+auto ${tensorlist_name}_materialized = ${tensorlist_name}.materialize();
+"""
+)
+
+# See [Note: IOptTensorListRef]
+# 'cpp_list_type' is needed here for supporting code generation using
+# both 'IOptTensorListRef' and 'List<optional<Tensor>>' types.
 SAVE_OPTIONALTENSORLIST_STORAGE = CodeTemplate(
     """\
 std::vector<c10::optional<Storage>> ${tensorlist_name}_storage_saved(${tensorlist_name}.size());
@@ -1087,6 +1099,7 @@ def emit_body(fn: NativeFunctionWithDifferentiabilityInfo) -> List[str]:
                 type == BaseCType(tensorListT)
                 or type == ListCType(OptionalCType(BaseCType(tensorT)))
                 or type == BaseCType(iTensorListRefT)
+                or type == BaseCType(iOptTensorListRefT)
             ):
                 expr = f"make_saved_variable_list({name})"
                 name += "_"
@@ -1179,10 +1192,16 @@ def emit_body(fn: NativeFunctionWithDifferentiabilityInfo) -> List[str]:
                         tensorlist_name=arg
                     ),
                 ]
-            elif noref_cpp_type == ListCType(OptionalCType(BaseCType(tensorT))):
+            elif noref_cpp_type == ListCType(
+                OptionalCType(BaseCType(tensorT))
+            ) or noref_cpp_type == BaseCType(iOptTensorListRefT):
                 stmts_before_call += [
-                    SAVE_OPTIONALTENSORLIST_STORAGE.substitute(tensorlist_name=arg),
-                    SAVE_OPTIONALTENSORLIST_IMPL.substitute(tensorlist_name=arg),
+                    SAVE_OPTIONALTENSORLIST_STORAGE.substitute(
+                        tensorlist_name=arg
+                    ),
+                    SAVE_OPTIONALTENSORLIST_IMPL.substitute(
+                        tensorlist_name=arg
+                    ),
                 ]
                 stmts_after_call += [
                     ENFORCE_SAME_OPTIONALTENSORLIST_STORAGE.substitute(
