@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 import datetime
-import importlib.util
 import json
+import signal
 import subprocess
 import sys
 import time
 from typing import Any, Dict, List
 
 
-def pip_install(package_name: str) -> None:
-    if importlib.util.find_spec(package_name) is None:
-        output = subprocess.run(
-            [sys.executable, "-m", "pip", "install", package_name],
-            stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-        )
-        if output.returncode != 0:
-            print(output.stderr.decode("utf-8"))
-            print(output.stdout.decode("utf-8"))
-    # when running this script in the background, pip installs the packages to
-    # a location that is not in a path python uses to look for modules, so we
-    # manually add the location to the path
+def add_package_to_path(package_name: str) -> None:
     location = subprocess.run(
         [sys.executable, "-m", "pip", "show", package_name],
         stderr=subprocess.PIPE,
@@ -31,9 +19,9 @@ def pip_install(package_name: str) -> None:
             sys.path.append(s.split(" ")[1])
 
 
-def main() -> None:
-    pip_install("psutil")
-    pip_install("pynvml")
+if __name__ == "__main__":
+    # add_package_to_path("psutil")
+    # add_package_to_path("pynvml")
     import psutil  # type: ignore[import]
     import pynvml  # type: ignore[import]
 
@@ -81,7 +69,16 @@ def main() -> None:
         # no pynvml avaliable, probably because not cuda
         pass
 
-    while True:
+    kill_now = False
+
+    def exit_gracefully(*args):
+        global kill_now
+        kill_now = True
+
+    signal.signal(signal.SIGINT, exit_gracefully)
+    signal.signal(signal.SIGTERM, exit_gracefully)
+
+    while not kill_now:
         try:
             stats = {
                 "time": datetime.datetime.utcnow().isoformat("T") + "Z",
@@ -90,6 +87,7 @@ def main() -> None:
             }
             if handle is not None:
                 stats["per_process_gpu_info"] = get_per_process_gpu_info(handle)
+                stats["total_gpu_utilizaiton"] = pynvml.nvmlDeviceGetUtilizationRates(handle).gpu
         except Exception as e:
             stats = {
                 "time": datetime.datetime.utcnow().isoformat("T") + "Z",
@@ -98,7 +96,3 @@ def main() -> None:
         finally:
             print(json.dumps(stats))
             time.sleep(1)
-
-
-if __name__ == "__main__":
-    main()
